@@ -1,0 +1,159 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keamanan Perangkat</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 480px;
+      margin: 35px auto;
+      padding: 20px;
+      background: #f4f6f8;
+    }
+    main {
+      background: white;
+      padding: 22px;
+      border-radius: 16px;
+    }
+    button {
+      width: 100%;
+      padding: 13px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 8px;
+      background: #1769aa;
+      color: white;
+      font-size: 16px;
+    }
+    video, canvas {
+      width: 100%;
+      margin-top: 12px;
+    }
+    #status { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<main>
+  <h2>Keamanan Perangkat</h2>
+  <p>
+    Dengan persetujuanmu, halaman ini dapat mengambil
+    foto dari kamera dan membaca lokasi perangkat.
+    Data hanya dikirim setelah kamu menekan tombol kirim.
+  </p>
+
+  <label>
+    <input type="checkbox" id="consent">
+    Saya setuju mengambil foto dan membagikan lokasi.
+  </label>
+
+  <button id="start">Izinkan kamera dan lokasi</button>
+  <video id="video" autoplay playsinline hidden></video>
+  <canvas id="photo" hidden></canvas>
+  <p id="status">Belum ada laporan.</p>
+
+  <button id="send" disabled>Kirim laporan</button>
+</main>
+
+<script>
+const video = document.querySelector("#video");
+const canvas = document.querySelector("#photo");
+const statusEl = document.querySelector("#status");
+const sendBtn = document.querySelector("#send");
+
+let stream = null;
+let locationData = null;
+let photoBlob = null;
+
+document.querySelector("#start").onclick = async () => {
+  if (!document.querySelector("#consent").checked) {
+    alert("Setujui penggunaan kamera dan lokasi terlebih dahulu.");
+    return;
+  }
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" },
+      audio: false
+    });
+
+    video.srcObject = stream;
+    video.hidden = false;
+    await video.play();
+
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(
+      video, 0, 0, canvas.width, canvas.height
+    );
+
+    photoBlob = await new Promise(resolve =>
+      canvas.toBlob(resolve, "image/jpeg", 0.85)
+    );
+
+    locationData = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({
+          latitude: p.coords.latitude,
+          longitude: p.coords.longitude,
+          accuracy: p.coords.accuracy
+        }),
+        reject,
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    });
+
+    statusEl.textContent =
+      "Foto siap ditinjau.\n" +
+      "Latitude: " + locationData.latitude +
+      "\nLongitude: " + locationData.longitude +
+      "\nAkurasi perkiraan: " +
+      Math.round(locationData.accuracy) + " meter.";
+
+    sendBtn.disabled = false;
+  } catch (e) {
+    statusEl.textContent =
+      "Gagal mengakses kamera atau lokasi: " + e.message;
+  } finally {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+  }
+};
+
+sendBtn.onclick = async () => {
+  if (!photoBlob || !locationData) return;
+
+  if (!confirm("Kirim foto dan lokasi ini ke server?")) return;
+
+  const data = new FormData();
+  data.append("photo", photoBlob, "laporan.jpg");
+  data.append("location", JSON.stringify(locationData));
+
+  sendBtn.disabled = true;
+  statusEl.textContent = "Mengirim laporan...";
+
+  try {
+    const response = await fetch("/report", {
+      method: "POST",
+      body: data
+    });
+
+    if (!response.ok) throw new Error("Server menolak laporan");
+
+    statusEl.textContent = "Laporan berhasil dikirim.";
+  } catch (e) {
+    statusEl.textContent =
+      "Laporan gagal dikirim. Periksa server dan koneksi.";
+  } finally {
+    sendBtn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
